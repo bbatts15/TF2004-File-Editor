@@ -384,6 +384,8 @@ void ITF::swizzle(){
 
 void ITF::unswizzle_4bit(){
     //https://github.com/neko68k/rtftool/blob/master/RTFTool/rtfview/p6t_v2.cpp
+    //https://forum.xentax.com/viewtopic.php?t=3516
+    
     std::vector<int> swizzledImage = pixelList;
     int w = width;
     int h = height;
@@ -392,6 +394,9 @@ void ITF::unswizzle_4bit(){
     if(!swizzled){
         return;
     }
+    // Make a copy of the swizzled input and clear buffer
+            byte[] Swizzled = new byte[Buf.Length - Where];
+            Array.Copy(Buf, Where, Swizzled, 0, Swizzled.Length);
 
     for (int y = 0; y < h; y++)
     {
@@ -399,7 +404,8 @@ void ITF::unswizzle_4bit(){
         {
             // get the pen
             int index = (y * w) + x ;
-
+            //byte uPen = (byte)(Swizzled[index >> 1] >> ((index & 1) * 4) & 0xF);
+            
             // swizzle
             int pageX = x &(~0x7f);
             int pageY = y &(~0x7f);
@@ -424,10 +430,14 @@ void ITF::unswizzle_4bit(){
             int column_location = posY * h * 2 + ((x + swap_selector) & 0x7) * 4;
 
             int byte_num = (x >> 3) & 3;     // 0,1,2,3
-
-            entry = swizzledImage[page_location + block_location + column_location + byte_num];
-            entry = (int)((entry >> ((y >> 1) & 0x01) * 4) & 0x0F);
-            pixelList[index] = entry;
+            int bits_set = (y >> 1) & 1;     // 0,1            (lower/upper 4 bits)
+            
+            byte uPen = (byte)(Swizzled[page_location + block_location + column_location + byte_num] >> ((index & 1) * 4) & 0xF);
+            Buf[Where + (index >> 1)] = (byte)((Buf[Where + (index >> 1)] & -bits_set) | (uPen << (bits_set * 4)));
+            
+            //entry = swizzledImage[page_location + block_location + column_location + byte_num]; - I think I replaced this with the line above
+            //entry = (int)((entry >> ((y >> 1) & 0x01) * 4) & 0x0F);          - I think this code is wrong, I think it needs to be a byte not an int - Brad
+            pixelList[index] = Buf;                                         //I think this entry is replaced with Buf now but I'm not sure
         }
     }
 }
@@ -435,31 +445,33 @@ void ITF::unswizzle_4bit(){
 void ITF::unswizzle(){
     //https://gist.github.com/Fireboyd78/1546f5c86ebce52ce05e7837c697dc72
     std::vector<int> swizzledImage = pixelList;
-    int InterlaceMatrix[] = {
+    byte[] InterlaceMatrix = {
         0x00, 0x10, 0x02, 0x12,
         0x11, 0x01, 0x13, 0x03,
     };
 
-    int Matrix[]        = { 0, 1, -1, 0 };
-    int TileMatrix[]    = { 4, -4 };
+    int[] Matrix        = { 0, 1, -1, 0 };
+    int[] TileMatrix    = { 4, -4 };
 
-
+    var pixels = new byte[width * height];
+    var newPixels = new byte[width * height];
+    
     int d = 0;
-    int s = 0;
+    int s = 0; 
 
     for (int y = 0; y < height; y++)
     {
         for (int x = 0; x < (width >> 1); x++)
         {
-            int p = pixelList[s++];
+            var p = pixelList[s++];
 
-            swizzledImage[d++] = (int)(p & 0xF);
-            swizzledImage[d++] = (int)(p >> 4);
+            swizzledImage[d++] = (byte)(p & 0xF);
+            swizzledImage[d++] = (byte)(p >> 4);
         }
     }
 
     // not sure what this was for, but it actually causes issues
-    // we can just use width directly without issues!
+    // we can just use width directly without issues! I think that loop is for rearrancing the pixels? - But our tile matrix is 4x4 and each tile should be 2x4 pixels
     //var mw = width;
 
     //if ((mw % 32) > 0)
@@ -469,27 +481,27 @@ void ITF::unswizzle(){
     {
         for (int x = 0; x < width; x++)
         {
-            int oddRow = ((y & 1) != 0);
+            var oddRow = ((y & 1) != 0);
 
-            int num1 = (int)((y / 4) & 1);
-            int num2 = (int)((x / 4) & 1);
-            int num3 = (y % 4);
+            var num1 = (int)((y / 4) & 1);
+            var num2 = (int)((x / 4) & 1);
+            var num3 = (y % 4);
 
-            int num4 = ((x / 4) % 4);
+            var num4 = ((x / 4) % 4);
 
             if (oddRow)
                 num4 += 4;
 
-            int num5 = ((x * 4) % 16);
-            int num6 = ((x / 16) * 32);
+            var num5 = ((x * 4) % 16);
+            var num6 = ((x / 16) * 32);
 
-            int num7 = (oddRow) ? ((y - 1) * width) : (y * width);
+            var num7 = (oddRow) ? ((y - 1) * width) : (y * width);
 
-            int xx = x + num1 * TileMatrix[num2];
-            int yy = y + Matrix[num3];
+            var xx = x + num1 * TileMatrix[num2];
+            var yy = y + Matrix[num3];
 
-            int i = InterlaceMatrix[num4] + num5 + num6 + num7;
-            int j = yy * width + xx;
+            var i = InterlaceMatrix[num4] + num5 + num6 + num7;
+            var j = yy * width + xx;
 
             pixelList[j] = swizzledImage[i];
         }
@@ -497,15 +509,17 @@ void ITF::unswizzle(){
 
     if(paletteList.size() == 16){
         std::vector<int> result = pixelList;
-
+        var result = new byte[width * height];
+        
         s = 0;
         d = 0;
 
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < (width >> 1); x++)
-                result[d++] = (int)((pixelList[s++] & 0xF) | (pixelList[s++] << 4));
+                result[d++] = (byte)((pixelList[s++] & 0xF) | (pixelList[s++] << 4));
         }
+        
         pixelList = result;
     }
 }
